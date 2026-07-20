@@ -58,11 +58,6 @@ public class Client {
         Charset charset  = Charset.forName("ISO-8859-2");
         Scanner scanner = new Scanner(System.in);
 
-        // Alokowanie bufora bajtowego
-        // allocateDirect pozwala na wykorzystanie mechanizmów sprzętowych
-        // do przyspieszenia operacji we/wy
-        // Uwaga: taki bufor powinien być alokowany jednokrotnie
-        // i wielokrotnie wykorzystywany w operacjach we/wy
         int rozmiar_bufora = 1024;
         ByteBuffer inBuf = ByteBuffer.allocateDirect(rozmiar_bufora);
         CharBuffer cbuf = null;
