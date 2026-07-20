@@ -68,7 +68,6 @@ public class Publisher {
                 continue;
             }
             else {
-                //System.out.println("coś jest od serwera");
                 inBuf.flip();
 
                 cbuf = charset.decode(inBuf);
