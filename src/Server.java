@@ -1,10 +1,5 @@
-package zad1;
-
-
 import java.io.IOException;
-import java.lang.reflect.Array;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.SelectionKey;
@@ -14,12 +9,11 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
 import java.util.*;
 
-
 public class Server {
 
     ArrayList<String> topics = new ArrayList<>();
-    HashMap<SocketAddress, HashSet<String>> clientsTopics = new HashMap<SocketAddress, HashSet<String>>();
-    Selector sele;
+    HashMap<SocketChannel, HashSet<String>> clientsTopics = new HashMap<>();
+    Selector selector;
 
     public static void main(String[] args) throws IOException, InterruptedException {
         new Server();
@@ -36,52 +30,40 @@ public class Server {
         serverSCh.socket().bind(new InetSocketAddress(host, port));
 
         serverSCh.configureBlocking(false);
+        selector = Selector.open();
+        serverSCh.register(selector, SelectionKey.OP_ACCEPT);
 
-        sele = Selector.open();
-
-        serverSCh.register(sele, SelectionKey.OP_ACCEPT);
-
-        System.out.println("Serwer: czekam ... ");
+        System.out.println("Server: waiting ... ");
 
         while (true) {
-            sele.select();
-
-            Set<SelectionKey> keys = sele.selectedKeys();
-
+            selector.select();
+            Set<SelectionKey> keys = selector.selectedKeys();
             Iterator<SelectionKey> iter = keys.iterator();
 
             while (iter.hasNext()) {
-
                 SelectionKey key = iter.next();
-
                 iter.remove();
 
                 if (key.isAcceptable()) {
-                    System.out.println("Serwer: ktoś się połączył ..., akceptuję go ... ");
+                    System.out.println("Server: someone connected ..., accepting ... ");
                     SocketChannel sCh = serverSCh.accept();
-
                     sCh.configureBlocking(false);
-
-                    sCh.register(sele, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
-
+                    sCh.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
                     continue;
                 }
 
                 if (key.isReadable()) {
                     SocketChannel sCh = (SocketChannel) key.channel();
-
                     serviceRequest(sCh);
-
                     continue;
                 }
-                if (key.isWritable()) {
 
+                if (key.isWritable()) {
                     continue;
                 }
             }
         }
     }
-
 
     private static Charset charset = Charset.forName("ISO-8859-2");
     private static final int BSIZE = 1024;
@@ -91,100 +73,111 @@ public class Server {
     private void serviceRequest(SocketChannel sc) {
         if (!sc.isOpen()) return;
 
-        System.out.print("Serwer: czytam komunikat od klienta ... ");
+        System.out.print("Server: reading message from client ... ");
 
         reqString.setLength(0);
         bbuf.clear();
 
         try {
             readLoop:
-            // Pokazuje gdzie ma wychodzić break
             while (true) {
                 int n = sc.read(bbuf);
-                if (n > 0) {
-                    bbuf.flip();
-                    CharBuffer cbuf = charset.decode(bbuf);
-                    while (cbuf.hasRemaining()) {
-                        char c = cbuf.get();
-                        System.out.println(c);
-                        if (c == '\r' || c == '\n') break readLoop; // <-
-                        else {
-                            //System.out.println(c);
-                            reqString.append(c);
-                        }
+                if (n == -1) {
+                    sc.close();
+                    sc.socket().close();
+                    return;
+                }
+                if (n == 0) break;
+
+                bbuf.flip();
+                CharBuffer cbuf = charset.decode(bbuf);
+                while (cbuf.hasRemaining()) {
+                    char c = cbuf.get();
+                    if (c == '\r' || c == '\n') break readLoop;
+                    else {
+                        reqString.append(c);
                     }
                 }
+                bbuf.clear();
             }
+
+            if (reqString.length() == 0) return;
 
             String cmd = reqString.toString();
             System.out.println(reqString);
 
             if (cmd.startsWith("New client")) {
-                clientsTopics.put(sc.getLocalAddress(), new HashSet<String>());
+                clientsTopics.put(sc, new HashSet<>());
                 System.out.println();
-                System.out.println(sc.getLocalAddress());
+                System.out.println(sc.getRemoteAddress());
                 sc.write(charset.encode(CharBuffer.wrap("Client added")));
-            }
+            } 
             else if (cmd.equals("Show topics")) {
                 String msg = "Ok, choose topic: ";
-                for (String topic:topics) {
+                for (String topic : topics) {
                     msg += topic + ", ";
                 }
                 sc.write(charset.encode(CharBuffer.wrap(msg)));
-            }
+            } 
             else if (cmd.equals("Hello")) {
                 sc.write(charset.encode(CharBuffer.wrap("Hello")));
-            }
+            } 
             else if (cmd.startsWith("Subscribe ")) {
-                if (topics.contains(cmd.split(" ")[1])) {
-                    clientsTopics.get(sc.getLocalAddress()).add(cmd.split(" ")[1]);
+                String topic = cmd.split(" ")[1];
+                if (topics.contains(topic)) {
+                    clientsTopics.get(sc).add(topic);
                     sc.write(charset.encode(CharBuffer.wrap("Ok, added")));
                     System.out.println("I sent: \"Ok, added\"");
+                } else {
+                    sc.write(charset.encode(CharBuffer.wrap("No such topic")));
+                    System.out.println("I sent: \"No such topic\"");
                 }
-                sc.write(charset.encode(CharBuffer.wrap("No such topic")));
-                System.out.println("I sent: \"No such topic\"");
-            }
+            } 
             else if (cmd.startsWith("Unsubscribe ")) {
-                if (clientsTopics.get(sc.getLocalAddress()).remove(cmd.split(" ")[1])) {
+                String topic = cmd.split(" ")[1];
+                if (clientsTopics.get(sc).remove(topic)) {
                     sc.write(charset.encode(CharBuffer.wrap("Ok, deleted")));
                     System.out.println("I sent: \"Ok, deleted\"");
+                } else {
+                    sc.write(charset.encode(CharBuffer.wrap("No such topic subscribed")));
+                    System.out.println("I sent: \"No such topic subscribed\"");
                 }
-                sc.write(charset.encode(CharBuffer.wrap("No such topic subscribed")));
-                System.out.println("I sent: \"No such topic subscribed\"");
-            }
+            } 
             else if (cmd.startsWith("Add topic ")) {
                 topics.add(cmd.split(" ")[2]);
                 sc.write(charset.encode(CharBuffer.wrap("Ok, added (or in base)")));
                 System.out.println("I sent: \"Ok, added (or in base)\"");
-            }
+            } 
             else if (cmd.startsWith("Remove topic ")) {
                 topics.remove(cmd.split(" ")[2]);
                 sc.write(charset.encode(CharBuffer.wrap("Ok, removed (or not in base)")));
                 System.out.println("I sent: \"Ok, removed (or not in base)\"");
-            }
+            } 
             else if (cmd.startsWith("News to ")) {
-                Set<SelectionKey> keys = sele.selectedKeys();
-                Iterator<SelectionKey> iter = keys.iterator();
+                String targetTopic = cmd.split(" ")[2];
                 sc.write(charset.encode(CharBuffer.wrap("News sent")));
                 System.out.println("I sent: \"News sent\"");
-                while (iter.hasNext()) {
-                    SelectionKey key = iter.next();
-                    if (clientsTopics.get(key).contains(cmd.split(" ")[2])) {
+                
+                for (SelectionKey key : selector.keys()) {
+                    if (key.isValid() && key.channel() instanceof SocketChannel) {
                         SocketChannel socketCh = (SocketChannel) key.channel();
-                        socketCh.write(charset.encode(CharBuffer.wrap(cmd)));
-                        System.out.println("I sent news: \""+cmd.split("")[3]+"...\"");
+                        HashSet<String> clientTopics = clientsTopics.get(socketCh);
+                        if (clientTopics != null && clientTopics.contains(targetTopic)) {
+                            socketCh.write(charset.encode(CharBuffer.wrap(cmd)));
+                            System.out.println("I sent news: \"" + cmd + "\"");
+                        }
                     }
                 }
-            }
+            } 
             else if (cmd.equals("Bye")) {
                 sc.write(charset.encode(CharBuffer.wrap("Bye")));
-                System.out.println("Serwer: mówię \"Bye\" do klienta ...\n\n");
-
+                System.out.println("Server: saying \"Bye\" to client ...\n\n");
                 sc.close();
                 sc.socket().close();
+            } 
+            else {
+                sc.write(charset.encode(CharBuffer.wrap("I don't understand: " + reqString)));
             }
-            else
-                sc.write(charset.encode(CharBuffer.wrap("Nie rozumiem: "+reqString)));
 
         } catch (Exception exc) {
             exc.printStackTrace();
